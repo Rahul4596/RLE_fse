@@ -885,22 +885,30 @@ void RLE_encode(long  **image,      /* input quantised DCT coefficients */
 
 
 
-  printf("\n here\n");
+
 int flag=0,num_sym=0,run=0;
 char c;
    for(k=1;k<=nx;k++)
   {
     for(l=1;l<=ny;l++)
     {
+      //printf("\n %ld %ld \n",k,l);
       if(image[k][l]==0)
       {
         run++;
       }
       else
       {
+       while(run>255)
+       {
+       		cache_sym[i]=255;
+       		run-=255;
+       		i++;
+
+       }
        cache_sym[i]=run;
        if(run>num_sym)
-        num_sym=run;
+        num_sym=255;
 
   
        i++;
@@ -914,9 +922,10 @@ char c;
   }
 }
 //printf(" \n %ld %d ", i, num_sym);
-write_long_bitwise(nx,sizeof(nx)*8,debug_file,fp);
-write_long_bitwise(ny,sizeof(ny)*8,debug_file,fp);
-printf("%ld ", sizeof(long) );
+//write_long_bitwise(nx,sizeof(nx)*8,debug_file,fp);
+//write_long_bitwise(ny,sizeof(ny)*8,debug_file,fp);
+//printf("%ld ", sizeof(long) );
+
 encode_adaptive_wnc(cache_sym,    i,             num_sym+1,             0.3,           8192,              0,   fp);
   /* free memory */
 
@@ -1897,7 +1906,7 @@ void write_long_bitwise_2(long c, /* (positive) number to write */
 {
   
   
- printf("writing->%ld with %ld bits \n",c,n );
+ //printf("writing->%ld with %ld bits \n",c,n );
   while(n>0)
   {
     /*set_bit(output_file,(c>>(n-1))&1);
@@ -1979,7 +1988,8 @@ for(i=0;i<maxValue;i++)
   total+=count[i];
   //printf("\n %ld -> %ld ", i, count[i]);
 }
-double t;
+double t[maxValue];
+
 for(i=0;i<maxValue;i++)
 {
   
@@ -1989,8 +1999,8 @@ for(i=0;i<maxValue;i++)
     norm_count[i]=0;
     continue;
   }
-  t=((double)count[i]/(double)total)*(double)tableSize;
-  norm_count[i]=(long)floor(t);//(fabs(t-floor(t)<0.5))?(long)floor(t):(long)ceil(t);
+  t[i]=((double)count[i]/(double)total)*(double)tableSize;
+  norm_count[i]=(long)floor(t[i]);//(fabs(t-floor(t)<0.5))?(long)floor(t):(long)ceil(t);
   if(norm_count[i]==0)
     norm_count[i]=1;
   total_norm+=norm_count[i];
@@ -2001,15 +2011,9 @@ for(i=0;i<maxValue;i++)
 }
 
 //printf("%ld %ld \n", norm_count[max],total_norm);
-/*norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
+/*norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors*/
 
-total_norm=0;
-for(i=0;i<maxValue;i++)
-{
-  printf("\n %ld -> %ld ", i, norm_count[i]);
-  temp_norm[i]=norm_count[i];
-  total_norm+=norm_count[i];
-}*/
+
 
 
 ////////////////////////////////////
@@ -2030,12 +2034,44 @@ total_norm-=10;*/
 
 ///////////////////////////////////
 
+total_norm=0;
+for(i=0;i<maxValue;i++)
+{
+  printf("\n %ld -> %ld ", i, norm_count[i]);
+  temp_norm[i]=norm_count[i];
+  total_norm+=norm_count[i];
+}
+
+
+printf(" total - %ld \n",total_norm );
+
 int flag=0;
 if(tableSize-total_norm>0)
-  norm_count[max]+=(tableSize-total_norm); //correcting for rounding errors
+  {
+  	flag=0;
+	while(tableSize-total_norm>0)
+	{
+		for(i=1;i<maxValue;i++)
+		{
+			printf("%ld ",i );
+			if(t[i]-floor(t[i]) > t[flag] - floor(t[flag]) || (t[i]-floor(t[i]) == t[flag] - floor(t[flag]) && t[i] < t[flag]))
+				{
+					
+					flag=i;
+					
+					
+					
+				}
+		}
+		norm_count[flag]++;
+		total_norm++;
+		t[flag]=0;
+		printf("%ld %ld %ld \n",flag, norm_count[flag], total_norm );
+	}  	
+  } //correcting for rounding errors
 else
 {
-  while(1)
+  /*while(1)
   {
     for(i=0;i<maxValue;i++)
     {
@@ -2050,9 +2086,14 @@ else
     }
     if(flag)
       break;
-  }
+  }*/
+	norm_count[max]=norm_count[max]-(total_norm-tableSize);
 }
-total_norm=0;
+
+
+
+
+
 
 
 
@@ -2066,9 +2107,21 @@ total_norm=0;
 //symbol start positions 
 long *cumul;
 alloc_vector_int(&cumul,maxValue+2);
-cumul[0];
-for(i=1;i<maxValue;i++)
-  cumul[i]=cumul[i-1]+norm_count[i-1];
+int highThreshold= tableSize-1;
+
+long *tableSymbol;
+alloc_vector_int(&tableSymbol,tableSize);
+
+for(i=1;i<=maxValue;i++)
+  {
+  	cumul[i]=cumul[i-1]+norm_count[i-1];
+  	if(norm_count[i-1]==1)
+  	{
+  		tableSymbol[highThreshold--]=i-1;
+  		norm_count[i-1]=-1;
+  	}
+
+  }
 cumul[maxValue]=tableSize+1;
 
 
@@ -2090,14 +2143,17 @@ cumul[maxValue]=tableSize+1;
 //now, we distribute the symbols
 long step, pos=0;
 step=(tableSize/2)+(tableSize/8)+3;
-long *tableSymbol;
-alloc_vector_int(&tableSymbol,tableSize);
+
 for(i=0;i<maxValue;i++) //iterating over symbols
 {
   for(j=0;j<norm_count[i];j++)  //iterating for the number of normalized occurences
   {
+    
     tableSymbol[pos]=i;
     pos=(pos+step)%tableSize;
+
+    while(pos>highThreshold)
+    	pos=(pos+step)%tableSize;
   }
  }
 
@@ -2227,7 +2283,7 @@ unsigned out_buff[srcSize];
 for(i=0;i<maxValue;i++)
 {
   //if(count[i])
-  printf("\n %ld -> %ld -> %ld ", i, count[i], norm_count[i]);
+  //printf("\n %ld -> %ld -> %ld ", i, count[i], norm_count[i]);
   //if(count[i]) // writing header info -> normalised counter array
   //  {
   //    write_long_bitwise_2(i,8,output_file);
@@ -2268,6 +2324,7 @@ for(i=srcSize-1;i>=0;i--)
 
 //printf("\n M=%ld N=%ld", total_norm,total);
 
+
 for(i=srcSize-1;i>=0;i--)
   {
     
@@ -2281,6 +2338,7 @@ for(i=srcSize-1;i>=0;i--)
     
     
   } 
+  printf("here\n");
 
   *finalState=stateValue;
 
@@ -2427,6 +2485,7 @@ int main (int argc, char **args)
   char *input_file = 0;        /* file name of uncompressed image */
   char tmp_file[1000];
   char tmp_file2[1000];
+  char tmp_file3[1000];
   char tmp_file_run[1000];         /* string for intermediate filenames */
   char total_file[1000];       /* file name of total compressed output */
   char comments[10000];        /* string for comments */
@@ -2450,7 +2509,8 @@ int main (int argc, char **args)
   BFILE *binary_file_run=0;
   BFILE *binary_file2=0;
   FILE *binary_file_in=0;
-  BFILE *binary_file_in2=0;       /* binary file for compressed bitstring */
+  BFILE *binary_file_in2=0; 
+  BFILE *binary_file3=0;      /* binary file for compressed bitstring */
   char*  debug_file=0;        /* filename for writing debug information */
   FILE*  dfile=0;             /* file for writing debug information */
   long   q=0;                 /* quantisation parameter */
@@ -2603,12 +2663,18 @@ int main (int argc, char **args)
 //FILE* debug_file
        sprintf(tmp_file,"%s.tree",output_file);
     sprintf(tmp_file2,"%s.treerun",output_file);
+     sprintf(tmp_file3,"%s.run",output_file);
 
     binary_file = fopen(tmp_file,"w");
     binary_file2=bfopen(tmp_file2,"w");
+    binary_file3=bfopen(tmp_file3,"w");
    
    long num_sym,n,finalState, srcSize,tableLog;
    long norm_count[257];
+   RLE_encode(image.orig_rgb[0],      /* input quantised DCT coefficients */
+                  nx[0], ny[0],   /* image dimensions */
+                  0,
+                  binary_file3);
     init_tree(&tree, image.orig_rgb[0],2,nx[0],ny[0],dfile,binary_file2, &num_sym, &n, norm_count, &finalState);
     store_tree(&tree, binary_file,nx[0]+2,ny[0]+2, num_sym, n, cache, finalState);
 
@@ -2618,7 +2684,9 @@ int main (int argc, char **args)
     bfclose(binary_file2);
     //for(i=0;i<257;i++)
       //printf("%ld \n",norm_count[i] );
-    binary_file_in=fopen(tmp_file,"r");
+
+
+    /*binary_file_in=fopen(tmp_file,"r");
     binary_file_in2=bfopen(tmp_file2,"r");
     load_tree(&tree2,binary_file_in,binary_file_in2, dfile, n);
     image_reconstruct(image_out,&tree2);
@@ -2631,7 +2699,7 @@ int main (int argc, char **args)
       
 
       fclose(binary_file_in);
-    bfclose(binary_file_in2); 
+    bfclose(binary_file_in2); */
         
 
     

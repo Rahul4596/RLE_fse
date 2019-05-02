@@ -299,6 +299,104 @@ for (j=0; j<=ny+1; j++)
 return;
 }  
 
+/****************************************************************************/
+
+void prepare_quantisation_map(long q, /* number of quantised values */
+                              long max_q, /* maximum possible grey value */
+                              long* quantisation_map_small,
+                              long* quantisation_map_back) {
+  long i;
+  long a = 0;
+  long max_levels=65536; /* 16 bit */
+
+  //printf("preparing quantisation map with q=%ld and max_q=%ld\n",q,max_q); 
+        
+  if (q > max_levels) {
+    printf("warning, quantisation exceeds max levels, set to %ld\n",max_levels);
+    q = max_levels;
+  }
+        
+  if ((q == max_levels || q == 0) && (max_q == max_levels)) {
+      for (i = 0; i < q; ++i) {
+        quantisation_map_back[i] = i;
+        quantisation_map_small[i] = i;
+      }
+  }
+  
+  for (i = 0; i <= q; ++i) {
+    quantisation_map_back[i] =
+      (long)((i+0.5)*max_q/q);
+  }
+  //printf("map back: done\n");
+        
+  a=0;
+  for (i = 0; i <= max_q-1; ++i) {
+    if (i-quantisation_map_back[a] > quantisation_map_back[a+1]-i
+        && a < q-1) a++;
+    quantisation_map_small[i] = a;
+  }
+  //printf("map small: done\n");
+}
+
+
+/*--------------------------------------------------------------------------*/
+void quantise_image_scalar(long** original,
+                           long nx, long ny,
+                           long max_q,
+                           long q,
+                           long* quantisation_map_small,
+                           long* quantisation_map_back,
+                           long** quantised) {
+  
+  long x, y;
+  long bx = 1, by = 1;
+  
+  prepare_quantisation_map(q,max_q,quantisation_map_small,quantisation_map_back);
+
+    for (x = bx; x < nx + bx; x++)
+      for (y = by; y < ny + by; y++) {
+        if (original[x][y]>255) {
+          original[x][y]=255;
+        }
+        if (original[x][y]<0) {
+          original[x][y]=0;
+        }
+        quantised[x][y] = quantisation_map_small[(long)(original[x][y])];
+        /*if (quantised[c][x][y]>=q) {
+          printf("%f > %ld\n",original[c][x][y],quantised[c][x][y]);
+          }*/
+      }
+}
+
+
+/*--------------------------------------------------------------------------*/
+void init_image_quantised(long** quantised,
+                          float** mask,
+                          long nx, long ny,
+                          long* qmap,
+                          long** image) {
+  
+  long i, j;
+
+  if (mask==0) {
+    for (i=1;i<=nx;i++) {
+      for (j=1;j<=ny;j++) {
+          image[i][j]=(float)qmap[quantised[i][j]];
+      }
+    }
+  } else {
+    for (i=1;i<=nx;i++) {
+      for (j=1;j<=ny;j++) {
+        if (mask[i][j]>0.5) {
+          image[i][j]=(float)qmap[quantised[i][j]];
+        } else {
+          image[i][j]=0;
+        }
+      }
+    }
+  }
+}
+
 /*--------------------------------------------------------------------------*/
 
 /* Create dithered mask of Laplacian magnitude. */
@@ -308,7 +406,7 @@ long dithering(float** mask,          /* mask (output) */
                long nx, long ny,      /* image dimensions */
                long bx, long by,      /* boundary size */
                float hx, float hy,    /* spatial grid size (for finite differences)*/
-               float density) {       /* desired pixel density in (0,1] */
+               float density, long* qmap) {       /* desired pixel density in (0,1] */
 
   long i,j;
   float** laplace;
@@ -360,31 +458,50 @@ long dithering(float** mask,          /* mask (output) */
 
   /* perform floyd-steinberg dithering */
   mask_points = 0;
-  for (i=bx; i<nx+bx; i++) {
-    for (j=by; j<ny+by; j++) {
+  long ref[2], run, flag, k;
+  ref[0]=bx;
+  ref[1]=by;
+  for (j = by; j < ny + by; j++)
+{
+   for (i = bx; i < nx + bx; i++)
+   {
 
-      old=mask[i][j];
-      
+      old = mask[i][j];
+
       /* quantisation */
-     /* if (mask[i][j] >= fabs(255.0-mask[i][j])) {
-        mask[i][j] = 255.0;
-        mask_points++;
-      } else {
-        mask[i][j] = 0.0;
-      } */
+      if (mask[i][j] >= fabs(255.0 - mask[i][j]))
+      {
+         mask[i][j] = 255.0;
+              mask_points++;
+         /*flag=0;
+         run=(j-ref[1])*nx + (i-ref[0]);
+         for(k=0;k<40;k++)
+         {
+          if(run==qmap[k])
+            {
+              
+              ref[0]=i;
+              ref[1]=j;
+              break;
+            }
+         }*/
 
-      // printf("old %f new %f\n",old,mask[i][j]);
+         
+      }
+      else
+      {
+         mask[i][j] = 0.0;
+      }
 
+      error = old - mask[i][j];
 
-      error = old-mask[i][j];
-      
       /* error distribution */
-      mask[i+1][j]+=7.0/16.0*error;
-      mask[i][j+1]+=5.0/16.0*error;
-      mask[i+1][j+1]+=1.0/16.0*error;
-      mask[i-1][j+1]+=3.0/16.0*error;
-    }
-  }
+      mask[i + 1][j] += 7.0 / 16.0 * error;
+      mask[i][j + 1] += 5.0 / 16.0 * error;
+      mask[i + 1][j + 1] += 1.0 / 16.0 * error;
+      mask[i - 1][j + 1] += 3.0 / 16.0 * error;
+   }
+}
 
   printf("created %ld mask points (desired: %ld)\n", mask_points,
          (long)roundf(density*nx*ny));
@@ -560,8 +677,11 @@ int main(int argc, char** args) {
       mask[i][j]=0.0;
     }
 
+    long qmap[257], qmap_small[40];
+  prepare_quantisation_map(40,256,qmap,qmap_small);
+
   if (floyd_steinberg == 1) {
-    dithering(mask,image,nx,ny,bx,by,1.0,1.0,density);
+    dithering(mask,image,nx,ny,bx,by,1.0,1.0,density,qmap_small);
     if (invert_flag>0) invert_flag = 0; else invert_flag = 1; 
   } else if (regular_flag == 0) {
     generate_mask(mask,nx,ny,bx,by,desired_pixels);
@@ -570,11 +690,20 @@ int main(int argc, char** args) {
     generate_regular_mask(mask,nx,ny,bx,by,desired_pixels);
   }
 
+  //long qmap[257], qmap_small[20];
+  //prepare_quantisation_map(20,256,qmap,qmap_small);
+
+  //int i;
+  for(i=0;i<20;i++)
+  	printf("%ld -> %ld \n",i,qmap_small[i] );
+
   comments[0]='\0';
   comment_line(comments,"#mask with density %f, regular flag %ld",
                density,regular_flag);
   write_mask(mask,nx,ny,invert_flag,mask_file,comments);
   printf ("output mask %s successfully written\n\n", mask_file);
+
+  
 
   
   return 0;

@@ -2378,7 +2378,7 @@ int main (int argc, char **args)
     bfclose(binary_file2);
    
 
-   /*binary_file_in=fopen(tmp_file,"r");
+   binary_file_in=fopen(tmp_file,"r");
     binary_file_in2=bfopen(tmp_file2,"r");
     load_tree(&tree2,binary_file_in,binary_file_in2, dfile);
     image_reconstruct(image_out,&tree2);
@@ -2392,7 +2392,7 @@ int main (int argc, char **args)
 
    // decode_adaptive_wnc(binary_file_in2,5,6,0.3,1024,dfile,a);
       fclose(binary_file_in);
-    bfclose(binary_file_in2); */
+    bfclose(binary_file_in2); 
         
  /*   long max=0;
     for(i=0;i<nx[0];i++)
