@@ -1968,7 +1968,7 @@ long i,j;
   // the computations and just choose 11  (refer fse_compress -> optimalTableLog)
 
 
-long *count,total=0,total_norm=0,max=0,tableSize=2048,maxValue=256,tableLog=log2(tableSize);
+long *count,total=0,total_norm=0,max=0,tableSize=4096,maxValue=256,tableLog=log2(tableSize);
 
 //*logValue=tableLog;
 
@@ -2115,11 +2115,11 @@ alloc_vector_int(&tableSymbol,tableSize);
 for(i=1;i<=maxValue;i++)
   {
   	cumul[i]=cumul[i-1]+norm_count[i-1];
-  	if(norm_count[i-1]==1)
+  	/*if(norm_count[i-1]==1)
   	{
   		tableSymbol[highThreshold--]=i-1;
   		norm_count[i-1]=-1;
-  	}
+  	}*/
 
   }
 cumul[maxValue]=tableSize+1;
@@ -2152,8 +2152,8 @@ for(i=0;i<maxValue;i++) //iterating over symbols
     tableSymbol[pos]=i;
     pos=(pos+step)%tableSize;
 
-    while(pos>highThreshold)
-    	pos=(pos+step)%tableSize;
+    /*while(pos>highThreshold)
+    	pos=(pos+step)%tableSize;*/
   }
  }
 
@@ -2366,7 +2366,7 @@ void decompress_fse(FILE* input_file, long* out_buff, long initialState, long sr
 
   //first spread the symbols
 
-  long tableLog=11;
+  long tableLog=12;
   //long srcSize = get_bits(input_file,8*sizeof(long));
   //long tableLog=get_bits(input_file,8);
   //unsigned initialState = get_bits(input_file,8*sizeof(unsigned));
@@ -2686,7 +2686,7 @@ int main (int argc, char **args)
       //printf("%ld \n",norm_count[i] );
 
 
-    /*binary_file_in=fopen(tmp_file,"r");
+    binary_file_in=fopen(tmp_file,"r");
     binary_file_in2=bfopen(tmp_file2,"r");
     load_tree(&tree2,binary_file_in,binary_file_in2, dfile, n);
     image_reconstruct(image_out,&tree2);
@@ -2699,7 +2699,7 @@ int main (int argc, char **args)
       
 
       fclose(binary_file_in);
-    bfclose(binary_file_in2); */
+    bfclose(binary_file_in2); 
         
 
     
