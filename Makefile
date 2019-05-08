@@ -10,8 +10,8 @@ OBJECTS=src/bfio.o \
 
 all: compress
 
-compress: $(OBJECTS) src/RLE_FSE_2.c Makefile
-	$(GPP) $(CCFLAGS) $(OBJECTS) src/RLE_FSE_2.c -o RLE_FSE_2 $(LDFLAGS)
+compress: $(OBJECTS) src/RLE_copy_2.c Makefile
+	$(GPP) $(CCFLAGS) $(OBJECTS) src/RLE_copy_2.c -o RLE_copy_2 $(LDFLAGS)
 
 %.o : %.c
 	$(GPP) $(CCFLAGS) -o $@ -c $<

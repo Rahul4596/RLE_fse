@@ -1357,7 +1357,7 @@ long get_bits(BFILE *binary_file, long bitdepth) {
   for (i=0; i<bitdepth; i++) {
     tmp = bfgetb(binary_file);
     b=b+tmp*p;
-     printf("b: %ld, bit %ld p: %ld\n",b,tmp,p);
+     //printf("b: %ld, bit %ld p: %ld\n",b,tmp,p);
     p=p*2;
   }
   return b;

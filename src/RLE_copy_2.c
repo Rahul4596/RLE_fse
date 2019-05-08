@@ -352,6 +352,188 @@ void print_usage_message() {
   printf("-q quantisation parameter  (int): use uniform quantisation matrix with entry q everywhere\n");
 }
 
+typedef struct _BITBUFFER {
+  unsigned char *b; /* array for bytewise content */
+  long max_size;    /* maximum size of the buffer (determined by allocation) */
+  long byte_pos;    /* current byte position */
+  long bit_pos;     /* current bit position (inside current byte) */
+} BITBUFFER;
+
+/*--------------------------------------------------------------------------*/
+
+void alloc_bitbuffer
+
+  (BITBUFFER *buffer, /* bitbuffer */
+   long n)            /* size */
+
+/* allocates memory for a bitbuffer of size n */
+{
+long i; /* loop variable */
+
+/* allocate array for individual bytes */
+buffer->b = (unsigned char *) malloc(n * sizeof(unsigned char));
+if (buffer->b == NULL)
+{
+   printf("alloc_bitbuffer: not enough memory available\n");
+   exit(1);
+}
+
+/* set max size, positions, and initialise all bytes with 0 */
+buffer->max_size = n;
+for (i = 0; i < buffer->max_size; i++)
+{
+   buffer->b[i] = 0;
+}
+buffer->byte_pos = 0;
+buffer->bit_pos = 0;
+return;
+} /* alloc_bitbuffer */
+
+/*--------------------------------------------------------------------------*/
+
+long bitbuffer_addbit
+
+  (BITBUFFER *buffer,  /* bitbuffer (output) */
+   unsigned char bit)  /* bit to be written */
+
+/* Add a single bit to the buffer at the current bit position.
+ * Returns 1 on success, 0 if the buffer is full
+ */
+{
+if ((buffer->byte_pos < buffer->max_size) && (buffer->bit_pos < 8))
+{
+   if (bit)
+      buffer->b[buffer->byte_pos] |= (1 << buffer->bit_pos);
+   else
+      buffer->b[buffer->byte_pos] &= ~(1 << buffer->bit_pos);
+   (buffer->bit_pos)++;
+   if (buffer->bit_pos > 7)
+   {
+      buffer->bit_pos = 0;
+      buffer->byte_pos++;
+   }
+   return 1;
+}
+return 0; /* adding not successful, memory full */
+} /* bitbuffer_addbit */
+
+/*--------------------------------------------------------------------------*/
+
+long bitbuffer_getbit
+
+  (BITBUFFER *buffer)  /* bitbuffer (output) */
+
+/* Get a single bit from the buffer at the current bit position and
+ * move the position one bit further.
+ * Returns the bit on success, -1 on failure.
+ */
+{
+unsigned char bit;
+
+if ((buffer->byte_pos < buffer->max_size) && (buffer->bit_pos < 8))
+{
+   bit = (buffer->b[buffer->byte_pos] >> buffer->bit_pos) & 1;
+   (buffer->bit_pos)++;
+   if (buffer->bit_pos > 7)
+   {
+      buffer->bit_pos = 0;
+      buffer->byte_pos++;
+   }
+   return bit;
+}
+else
+{
+   return -1; /* end of buffer already reached, no more bits to read */
+}
+} /* bitbuffer_getbit */
+
+/*--------------------------------------------------------------------------*/
+
+void bitbuffer_writefile
+
+  (BITBUFFER *buffer, /* buffer to be written */
+   FILE *bitfile)     /* output file (should be open for writing) */
+
+/* Write full bitbuffer to file in a single disk operation. */
+{
+fwrite(buffer->b, sizeof(unsigned char), buffer->byte_pos + 1, bitfile);
+} /* bitbuffer_writefile */
+
+/*--------------------------------------------------------------------------*/
+
+void bitbuffer_loadfile
+
+  (BITBUFFER *buffer, /* output buffer*/
+   FILE *bitfile)     /* input file (should be open for reading "rb") */
+
+/* Load file content from current position until end into bitbuffer. */
+{
+long start_pos; /* initial position of file pointer */
+long chunksize; /* size of file chunk to read */
+
+
+start_pos = ftell(bitfile);
+fseek(bitfile, 0, SEEK_END);
+chunksize = ftell(bitfile)-start_pos;
+fseek(bitfile, start_pos, SEEK_SET);
+
+/*printf("allocating buffer of size %ld\n",chunksize);*/
+alloc_bitbuffer(buffer,chunksize);
+
+/*printf("start reading at position %ld, write to %ld",
+   start_pos,buffer->byte_pos); */
+
+fread(buffer->b, 1, chunksize, bitfile);
+/*printf("%ld bytes loaded\n",chunksize);*/
+
+} /* bitbuffer_loadfile */
+
+
+void write_long_bitwise_2(long c, /* (positive) number to write */
+                        long n, /* number of bits */
+                        BITBUFFER *buffer) /* 0 no output,
+                                               otherwise write to binary file */
+{
+  
+  
+ //printf("writing->%ld with %ld bits \n",c,n );
+  while(n>0)
+  {
+    /*set_bit(output_file,(c>>(n-1))&1);
+    printf("b=%ld  " , (c>>(n-1))&1);
+    n--;*/
+    bitbuffer_addbit(buffer,(char)c%2);
+    
+    c/=2;
+    n--;
+  }
+  return;
+}
+
+long read_long_bitwise_2(BITBUFFER *buffer, /* (positive) number to write */
+                        long n /* number of bits */
+                        ) /* 0 no output,
+                                               otherwise write to binary file */
+{
+  
+  long temp,i,p=1,b=0;
+ //printf("writing->%ld with %ld bits \n",c,n );
+  for(i=0;i<n;i++)
+  {
+    temp=bitbuffer_getbit(buffer);
+    b+=temp*p;
+    p=p<<1;
+    
+  }
+    /*set_bit(output_file,(c>>(n-1))&1);
+    printf("b=%ld  " , (c>>(n-1))&1);
+    n--;*/
+    
+  
+  return b;
+}
+
+
 /*--------------------------------------------------------------------------*/
 
 /* apply WNC algorithm for adaptive arithmetic integer encoding */
@@ -363,7 +545,7 @@ void encode_adaptive_wnc(
   float r,           /* rescaling parameter */
   long  M,            /* WNC discretisation parameter M */
   FILE* debug_file,   /* 0 - no output, otherwise debug output to file */
-  BFILE* compressed)  {/* binary file for compressed bitstring */
+  FILE* compressed)  {/* binary file for compressed bitstring */
 
   long i,j;      /* loop variables */
   long L,H;      /* low and high interval endpoints of current interval */
@@ -380,6 +562,10 @@ void encode_adaptive_wnc(
 
   /* allocate memory */
   alloc_long_vector(&counter,s);
+  BITBUFFER buffer;
+  alloc_bitbuffer(&buffer,8*n);
+ // printf("%ld \n",8*n );
+
 
   /* initialise counters and C */
   for (i=0;i<s;i++) {
@@ -431,12 +617,12 @@ void encode_adaptive_wnc(
         }
         L=2*L; H=2*H;
         /* write 01^k to bitstream */
-        set_bit(compressed,0);
+        bitbuffer_addbit(&buffer,(char)0);
         if (debug_file != 0) {
           fprintf(debug_file,"written bits: 0");
         }
         for (j=0;j<k;j++) {
-          set_bit(compressed,1);
+          bitbuffer_addbit(&buffer,(char)1);
           if (debug_file != 0) {
             fprintf(debug_file,"1");
           }
@@ -456,12 +642,12 @@ void encode_adaptive_wnc(
         }
         L=2*L-M; H=2*H-M;
         /* write 10^k to bitstream */
-        set_bit(compressed,1);
+        bitbuffer_addbit(&buffer,(char)1);
         if (debug_file != 0) {
           fprintf(debug_file,"written bits: 1");
         }
         for (j=0;j<k;j++) {
-          set_bit(compressed,0);
+          bitbuffer_addbit(&buffer,(char)0);
           if (debug_file != 0) {
             fprintf(debug_file,"0");
           }
@@ -526,13 +712,13 @@ H=oldL+(long)floor((double)((csum+counter[symbol])*(H-oldL))/(double)C);
         }
         L=2*L; H=2*H;
         /* write 01^k to bitstream */
-        set_bit(compressed,0);
+        bitbuffer_addbit(&buffer,(char)0);
         bits_written++;
         if (debug_file != 0) {
           fprintf(debug_file,"written bits: 0");
         }
         for (j=0;j<k;j++) {
-          set_bit(compressed,1);
+          bitbuffer_addbit(&buffer,(char)1);
           bits_written++;
           if (debug_file != 0) {
             fprintf(debug_file,"1");
@@ -552,13 +738,13 @@ H=oldL+(long)floor((double)((csum+counter[symbol])*(H-oldL))/(double)C);
         }
         L=2*L-M; H=2*H-M;
         /* write 10^k to bitstream */
-        set_bit(compressed,1);
+        bitbuffer_addbit(&buffer,(char)1);
         bits_written++;
         if (debug_file != 0) {
           fprintf(debug_file,"written bits: 1");
         }
         for (j=0;j<k;j++) {
-          set_bit(compressed,0);
+          bitbuffer_addbit(&buffer,(char)0);
           bits_written++;
           if (debug_file != 0) {
             fprintf(debug_file,"0");
@@ -583,26 +769,26 @@ H=oldL+(long)floor((double)((csum+counter[symbol])*(H-oldL))/(double)C);
     fprintf(debug_file,"last interval - written bits:");
   }
   if (L<M14) {
-      set_bit(compressed,0);
+      bitbuffer_addbit(&buffer,(char)0);
       bits_written++;
       if (debug_file != 0) {
         fprintf(debug_file,"0");
       }
     for (j=0;j<k+1;j++) {
-      set_bit(compressed,1);
+      bitbuffer_addbit(&buffer,(char)1);
       bits_written++;
       if (debug_file != 0) {
         fprintf(debug_file,"1");
       }
     }
   } else {
-    set_bit(compressed,1);
+    bitbuffer_addbit(&buffer,(char)1);
     bits_written++;
     if (debug_file != 0) {
       fprintf(debug_file,"1");
     }
     for (j=0;j<k+1;j++) {
-      set_bit(compressed,0);
+      bitbuffer_addbit(&buffer,(char)0);
       bits_written++;
       if (debug_file != 0) {
         fprintf(debug_file,"0");
@@ -615,7 +801,7 @@ H=oldL+(long)floor((double)((csum+counter[symbol])*(H-oldL))/(double)C);
     fprintf(debug_file,"\n padding bits:");
   }
   for (i=0;i<log2(M)-bits_written;i++) {
-    set_bit(compressed,0);
+    bitbuffer_addbit(&buffer,(char)0);
     if (debug_file != 0) {
       fprintf(debug_file,"0");
     }
@@ -627,6 +813,8 @@ H=oldL+(long)floor((double)((csum+counter[symbol])*(H-oldL))/(double)C);
   }
 
   /* allocate memory */
+  bitbuffer_writefile(&buffer,compressed);
+
   disalloc_long_vector(counter,s);
 }
 
@@ -636,7 +824,7 @@ H=oldL+(long)floor((double)((csum+counter[symbol])*(H-oldL))/(double)C);
 
 /* apply WNC algorithm for adaptive arithmetic integer encoding */
 void decode_adaptive_wnc(
-    BFILE* compressed,  /* binary file with compressed bitstring */
+    FILE* compressed,  /* binary file with compressed bitstring */
     long n,             /* length of sourceword */
     long s,             /* size of source alphabet */
     double r,           /* rescaling parameter */
@@ -661,6 +849,12 @@ void decode_adaptive_wnc(
   printf("n=%ld s=%ld M=%ld \n",n,s,M );
   /* allocate memory */
   alloc_long_vector(&counter,s);
+
+
+
+  BITBUFFER buffer;
+  alloc_bitbuffer(&buffer,8*n);
+  bitbuffer_loadfile(&buffer,compressed);
   
   /* initialise counters and C */
   for (i=0;i<s;i++) {
@@ -686,7 +880,7 @@ void decode_adaptive_wnc(
   j=(long)pow(2,N-1);
   v=0;
   for (i=0;i<N;i++) {
-   b = get_bit(compressed);
+   b = bitbuffer_getbit(&buffer);
    v += b*j;
    if (debug_file != 0) {
      fprintf(debug_file,
@@ -699,6 +893,9 @@ void decode_adaptive_wnc(
            v,N,log((double)M)/log(2.0));
   }
 
+  
+
+
   /* decode sourceword */
   for (i=0;i<n;i++) {
   
@@ -708,7 +905,7 @@ void decode_adaptive_wnc(
       if ((L >= M14) && (L<M12) && (H>M12) && (H<=M34)) {
         L=2*L-M12; H=2*H-M12; v=2*v-M12;
         /* shift in next bit */
-        b=get_bit(compressed);
+        b=bitbuffer_getbit(&buffer);
         if (b!=EOF) {
           v+=b;
         }
@@ -724,7 +921,7 @@ void decode_adaptive_wnc(
       if (H<=M12) {
         L=2*L; H=2*H; v=2*v;
         /* shift in next bit */
-        b=get_bit(compressed);
+        b=bitbuffer_getbit(&buffer);
         if (b!=EOF) {
           v+=b;
         }
@@ -739,7 +936,7 @@ void decode_adaptive_wnc(
       if (L>=M12) {
         L=2*L-M; H=2*H-M; v=2*v-M;
         /* shift in next bit */
-        b=get_bit(compressed);
+        b=bitbuffer_getbit(&buffer);
         if (b!=EOF) {
           v+=b;
         }
@@ -791,6 +988,7 @@ void decode_adaptive_wnc(
               w,i,symbol,L,H);
     }
   }
+
 }
 
 
@@ -941,7 +1139,7 @@ void read_long_bitwise(long *c, /* (positive) number to write */
 void RLE_encode(long  **image,      /* input quantised DCT coefficients */
                   long nx, long ny,   /* image dimensions */
                   FILE* debug_file,
-                  BFILE* fp)  /* 0 - no output, 
+                  FILE* fp)  /* 0 - no output, 
                                          otherwise debug output to file */
                 //  BFILE *binary_file) 
                 {/* file for binary output */
@@ -1003,7 +1201,7 @@ void RLE_encode(long  **image,      /* input quantised DCT coefficients */
       }
   }
   }*/
-  printf("\n here\n");
+  //printf("\n here\n");
 int flag=0,num_sym=0,run=0;
 char c;
    for(k=1;k<=nx;k++)
@@ -1044,7 +1242,7 @@ char c;
 write_long_bitwise(nx,sizeof(nx)*8,debug_file,fp);
 write_long_bitwise(ny,sizeof(ny)*8,debug_file,fp);
 printf("%ld ", sizeof(long) );
-encode_adaptive_wnc(cache_sym,    i,             num_sym+1,             0.3,           8192,              0,   fp);
+encode_adaptive_wnc(cache_sym,    i,             num_sym+1,             0.3,       2048,              0,   fp);
   /* free memory */
 
   disalloc_long_vector(cache_sym,nx*ny);
@@ -1098,7 +1296,7 @@ struct REEDNode {
     long value;                      /* 0: leaf, 1: internal,
                                       -1: uninitialised */
     float error;                    /* cached error for inpainting */
-    long run[11];
+    long run[101];
     long  cx,cy;                    /* corner locations of the corresponding
                                        subimage */
     long  nx,ny;                    /* dimensions of the corresponding
@@ -1315,7 +1513,7 @@ alloc_long_vector(&cache_sym_3,5000);
                 avg_thres+=u[k][l];
                 count++;
               }
-        if(count<=10)
+        if(count<=100)
          {  
           set_node(&(tree->nodes[i][j]),0,cx,cy,nx_new,ny_new,-1);
         //  continue;
@@ -1354,21 +1552,12 @@ alloc_long_vector(&cache_sym_3,5000);
             //        num_sym++;
               master_count++;
             //  fprintf(debug_file," %ld",node.run[k] );
-              if(i<=8)
-              {
-              	cache_sym_1[master_count_1]=node.run[k]+1;
-              	if(node.run[k]>num_sym_1)
-                	num_sym_1=node.run[k]+1;
-                master_count_1++;
+            
+              	
 
-              }
-              else if(i>8 )
-              {
-              	cache_sym_2[master_count_2]=node.run[k]+1;
-              	if(node.run[k]>num_sym_2)
-                	num_sym_2=node.run[k]+1;
-                master_count_2++;
-              }
+              
+              	
+              
             /*  else
               {
               	cache_sym_3[master_count_3]=node.run[k]+1;
@@ -1400,7 +1589,7 @@ alloc_long_vector(&cache_sym_3,5000);
 
         
       }
-      printf("%ld \n",master_count );
+      //printf("%ld \n",master_count );
       
     }
   /*  long num_sym_2=0;
@@ -1508,10 +1697,10 @@ alloc_long_vector(&cache_sym_3,5000);
       else
         break;
      }
-     printf("here \n \n \n \n");
-     //encode_adaptive_wnc(cache_sym,    master_count,             num_sym+1,             0.3,           8192,             debug_file,   fp);
-     encode_adaptive_wnc(cache_sym_1,    master_count_1,             num_sym_1+1,             0.3,           8192,             debug_file,   fp);
-   encode_adaptive_wnc(cache_sym_2,    master_count_2,             num_sym_2+1,             0.3,           8192,             debug_file,   fp);
+     //printf("here \n \n \n \n");
+     encode_adaptive_wnc(cache_sym,    master_count,             num_sym+1,             0.3,           2048,             debug_file,   fp);
+    //encode_adaptive_wnc(cache_sym_1,    master_count_1,             num_sym_1+1,             0.3,           8192,             debug_file,   fp);
+   //encode_adaptive_wnc(cache_sym_2,    master_count_2,             num_sym_2+1,             0.3,           8192,             debug_file,   fp);
    // encode_adaptive_wnc(cache_sym_3,    master_count_3,             num_sym_3+1,             0.3,           8192,             debug_file,   fp);
     *num_symbols=num_sym+1;
     *source_length=master_count;
@@ -1648,77 +1837,11 @@ REEDNode* addREEDNodeByPos
 }
 
 
-typedef struct _BITBUFFER {
-  unsigned char *b;
-  long max_size;
-  long byte_pos;
-  long bit_pos;
-} BITBUFFER;
+/* -------------------- STORAGE AND CODING ---------------------------------*/
+
+
 
 /*--------------------------------------------------------------------------*/
-
-void alloc_bitbuffer
-     (BITBUFFER* buffer,   /* bitbuffer */
-      long  n)              /* size */
-     /* allocates memory for a bitbuffer of size n */
-{
-  long i;
-  buffer->b = (unsigned char *) malloc (n * sizeof(unsigned char));
-  if (buffer->b == NULL)
-    {
-      printf("alloc_bitbuffer: not enough memory available\n");
-      exit(1);
-    }
-  buffer->max_size=n;
-  for (i=0;i<buffer->max_size;i++) {
-    buffer->b[i]=0;
-  }
-  buffer->byte_pos=0;
-  buffer->bit_pos=0;
-return;
-}
-
-/*--------------------------------------------------------------------------*/
-
-long bitbuffer_addbit(BITBUFFER* buffer, unsigned char bit) {
-  if ((buffer->byte_pos < buffer->max_size) && (buffer->bit_pos < 8)) {
-    if (bit) buffer->b[buffer->byte_pos] |= (1 << buffer->bit_pos);
-    else buffer->b[buffer->byte_pos] &= ~(1 << buffer->bit_pos);
-    (buffer->bit_pos)++;
-    if (buffer->bit_pos > 7) {
-      buffer->bit_pos = 0;
-      buffer->byte_pos++;
-    }
-    return 1;
-  }
-  return 0; /* adding not successful, memory full */  
-}
-
-/*--------------------------------------------------------------------------*/
-
-void bitbuffer_writefile(BITBUFFER* buffer, FILE* bitfile) {
-  fwrite (buffer->b, sizeof(unsigned char), buffer->byte_pos+1, bitfile);
-}
-
-/*--------------------------------------------------------------------------*/
-
-void bitbuffer_printbits(BITBUFFER* buffer) {
-  long i,j;
-  printf("Bitbuffer stores %ld bits:\n",
-         (buffer->byte_pos)*8+buffer->bit_pos);
-  for (i=0;i<buffer->byte_pos;i++) {
-    for (j=0;j<8;j++) {
-      printf("%u",((buffer->b[i] & (1u << j)) > 0));
-    }
-    printf(" ");
-  }
-  i=buffer->byte_pos;
-  for (j=0;j<buffer->bit_pos;j++) {
-    printf("%u",((buffer->b[i] & (1u << j)) > 0));
-  }
-  printf("\n");
-}
-
 
 
 
@@ -1826,7 +1949,17 @@ int load_tree
     fread (&byte, sizeof(char), 1, fp);
     tree->max_level = (long)byte;
     alloc_long_vector(&cache_sym,source_length);
-    decode_adaptive_wnc(fp2, source_length, num_sym,0.3,8192,0, cache_sym);
+    clock_t t;
+    t=clock(); 
+
+    decode_adaptive_wnc(fp2, source_length, num_sym,0.3,2048,0, cache_sym);
+
+
+    t=clock()-t;
+    double time_dec=((double)t)/CLOCKS_PER_SEC;    
+
+    printf("total took %f seconds \n",time_dec );
+    
     cache_sym[source_length-1]=0;
 
 
@@ -1992,7 +2125,7 @@ for( i = 1; i < (long)(tree->level); i++ ) {
     }
   }
 
- /* for( i = 0; i < (long)(tree->level); i++ ) {
+  /*for( i = 0; i < (long)(tree->level); i++ ) {
     n = pow( 2.0, i );
       for( j = 0; j < n; j++ ) {
 
@@ -2002,7 +2135,7 @@ for( i = 1; i < (long)(tree->level); i++ ) {
           //k=0;
          //  printf("\n %ld %ld %ld %ld", node.cx,node.cy,node.nx,node.ny);
            printf("\n %ld %ld->", i,j);
-          for(k=0;k<11;k++)
+          for(k=0;k<101;k++)
             printf(" %ld",node.run[k] );
         //  while(node.run[k]!=-1)
         //    {printf(" %ld",node.run[k] );k++;}
@@ -2131,7 +2264,7 @@ int main (int argc, char **args)
   BFILE *binary_file_run=0;
   BFILE *binary_file2=0;
   FILE *binary_file_in=0;
-  BFILE *binary_file_in2=0;       /* binary file for compressed bitstring */
+  FILE *binary_file_in2=0;       /* binary file for compressed bitstring */
   char*  debug_file=0;        /* filename for writing debug information */
   FILE*  dfile=0;             /* file for writing debug information */
   long   q=0;                 /* quantisation parameter */
@@ -2358,13 +2491,15 @@ int main (int argc, char **args)
     createREEDTree(&tree,20);
     createREEDTree(&tree2,20);
 
+    
+
    // REEDTree *tree, long  **u, long threshold, long nx, long ny,
 //FILE* debug_file
        sprintf(tmp_file,"%s.tree",output_file);
     sprintf(tmp_file2,"%s.treerun",output_file);
-
+    
     binary_file = fopen(tmp_file,"w");
-    binary_file2=bfopen(tmp_file2,"w");
+    binary_file2=fopen(tmp_file2,"w");
    
    long num_sym,n;
     init_tree(&tree, image.orig_rgb[0],2,nx[0],ny[0],dfile,binary_file2, &num_sym, &n);
@@ -2375,11 +2510,11 @@ int main (int argc, char **args)
     encode_adaptive_wnc(a,5,6,0.3,128,dfile,binary_file2);*/
     
     fclose(binary_file);
-    bfclose(binary_file2);
+    fclose(binary_file2);
    
-
+    
    binary_file_in=fopen(tmp_file,"r");
-    binary_file_in2=bfopen(tmp_file2,"r");
+    binary_file_in2=fopen(tmp_file2,"rb");
     load_tree(&tree2,binary_file_in,binary_file_in2, dfile);
     image_reconstruct(image_out,&tree2);
 
@@ -2392,7 +2527,7 @@ int main (int argc, char **args)
 
    // decode_adaptive_wnc(binary_file_in2,5,6,0.3,1024,dfile,a);
       fclose(binary_file_in);
-    bfclose(binary_file_in2); 
+    
         
  /*   long max=0;
     for(i=0;i<nx[0];i++)
